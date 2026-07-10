@@ -14,9 +14,12 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+echo "=========================================="
 echo "Generating Termux sources..."
 echo "Architectures: $ARCHITECTURES"
+echo "Additional packages: $ADDITIONAL_PACKAGES"
 echo "App type: $APP_TYPE"
+echo "=========================================="
 
 # Clone
 git clone --depth 1 https://github.com/termux/termux-app.git termux-app-src
@@ -24,6 +27,7 @@ git clone --depth 1 https://github.com/termux/termux-packages.git termux-package
 
 # Apply patches
 if [ -d "$APP_TYPE-patches/app-patches" ]; then
+    echo "Applying app patches..."
     cd termux-app-src
     for p in ../$APP_TYPE-patches/app-patches/*.patch; do
         [ -f "$p" ] && patch -p1 < "$p"
@@ -32,6 +36,7 @@ if [ -d "$APP_TYPE-patches/app-patches" ]; then
 fi
 
 if [ -d "$APP_TYPE-patches/bootstrap-patches" ]; then
+    echo "Applying bootstrap patches..."
     cd termux-packages-src
     for p in ../$APP_TYPE-patches/bootstrap-patches/*.patch; do
         [ -f "$p" ] && patch -p1 < "$p"
@@ -40,17 +45,20 @@ if [ -d "$APP_TYPE-patches/bootstrap-patches" ]; then
 fi
 
 # Build bootstrap
+echo "Building bootstrap..."
 cd termux-packages-src
 ./scripts/run-docker.sh ./scripts/build-bootstraps.sh \
     --architectures "$ARCHITECTURES" \
     --add "$ADDITIONAL_PACKAGES" \
     --disable-bootstrap-second-stage
+
 mkdir -p ../output/bootstrap
 cp bootstrap-*.tar.xz ../output/bootstrap/
 cp -r xz-* ../output/bootstrap/
 cd ..
 
 # Extract terminal-emulator
+echo "Extracting terminal-emulator module..."
 OUTPUT="output/terminal-emulator"
 mkdir -p "$OUTPUT"
 
@@ -75,4 +83,6 @@ done
 mkdir -p "$OUTPUT/res"
 cp -r termux-app-src/src/main/res/* "$OUTPUT/res/" 2>/dev/null || true
 
+echo "=========================================="
 echo "Done! Output: $OUTPUT"
+echo "=========================================="
