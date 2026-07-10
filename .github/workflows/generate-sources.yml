@@ -1,0 +1,60 @@
+name: Generate Termux Sources
+
+on:
+  workflow_dispatch:
+    inputs:
+      architectures:
+        description: 'Bootstrap architectures (comma-separated)'
+        required: false
+        default: 'aarch64'
+        type: string
+      additional_packages:
+        description: 'Additional packages to include'
+        required: false
+        default: 'xkeyboard-config'
+        type: string
+      app_type:
+        description: 'App type'
+        required: false
+        default: 'f-droid'
+        type: choice
+        options:
+          - f-droid
+          - play-store
+
+jobs:
+  generate:
+    name: Generate Sources
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Docker
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y docker.io
+          sudo systemctl start docker
+
+      - name: Generate Sources
+        run: |
+          chmod +x scripts/generate-sources.sh
+          ./scripts/generate-sources.sh \
+            --architectures "${{ inputs.architectures }}" \
+            --additional-packages "${{ inputs.additional_packages }}" \
+            --app-type "${{ inputs.app_type }}"
+
+      - name: Upload terminal-emulator module
+        uses: actions/upload-artifact@v4
+        with:
+          name: terminal-emulator-module
+          path: output/terminal-emulator/
+          retention-days: 30
+
+      - name: Upload bootstrap
+        uses: actions/upload-artifact@v4
+        with:
+          name: termux-bootstrap
+          path: output/terminal-emulator/assets/bootstrap-*.tar.xz
+          retention-days: 30
