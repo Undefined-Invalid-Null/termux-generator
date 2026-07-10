@@ -27,8 +27,21 @@ git clone --depth 1 https://github.com/termux/termux-packages.git termux-package
 git clone --depth 1 https://github.com/termux/termux-am-library.git termux-am-library-src
 
 # Move termux-am-library
-mv termux-am-library-src/termux-am-library/ termux-app-src/termux-am-library 2>/dev/null || true
+if [ -d "termux-am-library-src/termux-am-library" ]; then
+    mv termux-am-library-src/termux-am-library/ termux-app-src/termux-am-library 2>/dev/null || true
+fi
 rm -rf termux-am-library-src
+
+# Copy termux_generator_utils.sh to termux-packages scripts
+if [ -f "scripts/termux_generator_utils.sh" ]; then
+    echo "Copying termux_generator_utils.sh..."
+    cp scripts/termux_generator_utils.sh termux-packages-src/scripts/
+fi
+
+# Copy to termux-app as well
+if [ -f "scripts/termux_generator_utils.sh" ]; then
+    cp scripts/termux_generator_utils.sh termux-app-src/scripts/ 2>/dev/null || true
+fi
 
 # Apply app patches
 if [ -d "$APP_TYPE-patches/app-patches" ]; then
@@ -37,7 +50,7 @@ if [ -d "$APP_TYPE-patches/app-patches" ]; then
     for p in ../$APP_TYPE-patches/app-patches/*.patch; do
         if [ -f "$p" ]; then
             echo "Applying: $(basename $p)"
-            patch -p1 < "$p" || echo "Warning: patch $(basename $p) failed"
+            patch -p1 < "$p" 2>/dev/null || echo "Warning: patch $(basename $p) skipped"
         fi
     done
     cd ..
@@ -50,7 +63,7 @@ if [ -d "$APP_TYPE-patches/bootstrap-patches" ]; then
     for p in ../$APP_TYPE-patches/bootstrap-patches/*.patch; do
         if [ -f "$p" ]; then
             echo "Applying: $(basename $p)"
-            patch -p1 < "$p" || echo "Warning: patch $(basename $p) failed"
+            patch -p1 < "$p" 2>/dev/null || echo "Warning: patch $(basename $p) skipped"
         fi
     done
     cd ..

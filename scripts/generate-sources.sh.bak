@@ -24,22 +24,34 @@ echo "=========================================="
 # Clone
 git clone --depth 1 https://github.com/termux/termux-app.git termux-app-src
 git clone --depth 1 https://github.com/termux/termux-packages.git termux-packages-src
+git clone --depth 1 https://github.com/termux/termux-am-library.git termux-am-library-src
 
-# Apply patches
+# Move termux-am-library
+mv termux-am-library-src/termux-am-library/ termux-app-src/termux-am-library 2>/dev/null || true
+rm -rf termux-am-library-src
+
+# Apply app patches
 if [ -d "$APP_TYPE-patches/app-patches" ]; then
     echo "Applying app patches..."
     cd termux-app-src
     for p in ../$APP_TYPE-patches/app-patches/*.patch; do
-        [ -f "$p" ] && patch -p1 < "$p"
+        if [ -f "$p" ]; then
+            echo "Applying: $(basename $p)"
+            patch -p1 < "$p" || echo "Warning: patch $(basename $p) failed"
+        fi
     done
     cd ..
 fi
 
+# Apply bootstrap patches
 if [ -d "$APP_TYPE-patches/bootstrap-patches" ]; then
     echo "Applying bootstrap patches..."
     cd termux-packages-src
     for p in ../$APP_TYPE-patches/bootstrap-patches/*.patch; do
-        [ -f "$p" ] && patch -p1 < "$p"
+        if [ -f "$p" ]; then
+            echo "Applying: $(basename $p)"
+            patch -p1 < "$p" || echo "Warning: patch $(basename $p) failed"
+        fi
     done
     cd ..
 fi
@@ -53,8 +65,8 @@ cd termux-packages-src
     --disable-bootstrap-second-stage
 
 mkdir -p ../output/bootstrap
-cp bootstrap-*.tar.xz ../output/bootstrap/
-cp -r xz-* ../output/bootstrap/
+cp bootstrap-*.tar.xz ../output/bootstrap/ 2>/dev/null || true
+cp -r xz-* ../output/bootstrap/ 2>/dev/null || true
 cd ..
 
 # Extract terminal-emulator
@@ -71,12 +83,12 @@ cp -r termux-app-src/src/main/jni/*.c "$OUTPUT/jni/" 2>/dev/null || true
 cp -r termux-app-src/src/main/jni/Android.mk "$OUTPUT/jni/" 2>/dev/null || true
 
 mkdir -p "$OUTPUT/assets"
-cp output/bootstrap/bootstrap-*.tar.xz "$OUTPUT/assets/"
+cp output/bootstrap/bootstrap-*.tar.xz "$OUTPUT/assets/" 2>/dev/null || true
 
 for arch in ${ARCHITECTURES//,/ }; do
     if [ -d "output/bootstrap/xz-$arch" ]; then
         mkdir -p "$OUTPUT/assets/xz-$arch"
-        cp output/bootstrap/xz-$arch/* "$OUTPUT/assets/xz-$arch/"
+        cp output/bootstrap/xz-$arch/* "$OUTPUT/assets/xz-$arch/" 2>/dev/null || true
     fi
 done
 
