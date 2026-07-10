@@ -64,37 +64,12 @@ echo "Verifying local-bootstraps patch..."
 
 cd termux-app-src
 
-# 检查是否已应用
 if ! grep -q "import android.content.res.AssetManager" app/src/main/java/com/termux/app/TermuxInstaller.java 2>/dev/null; then
-    echo "  ❌ local-bootstraps patch NOT applied - applying manually..."
-
-    # 手动修改 TermuxInstaller.java
-    cat > app/src/main/java/com/termux/app/TermuxInstaller.java.patch << 'EOF'
---- a/app/src/main/java/com/termux/app/TermuxInstaller.java
-+++ b/app/src/main/java/com/termux/app/TermuxInstaller.java
-@@ -4,6 +4,7 @@
- import android.app.AlertDialog;
- import android.app.ProgressDialog;
- import android.content.Context;
-+import android.content.res.AssetManager;
- import android.os.Build;
- import android.os.Environment;
- import android.system.Os;
-@@ -22,6 +23,8 @@
- import java.io.ByteArrayInputStream;
- import java.io.File;
- import java.io.FileOutputStream;
-+import java.io.InputStream;
-+import java.io.OutputStream;
- import java.io.InputStreamReader;
- import java.util.ArrayList;
- import java.util.List;
-EOF
-
-    # 直接用 sed 修改
+    echo "  Applying local-bootstraps patch manually..."
+    
     sed -i 's/import android.content.Context;/import android.content.Context;\nimport android.content.res.AssetManager;/' app/src/main/java/com/termux/app/TermuxInstaller.java
     sed -i 's/import java.io.FileOutputStream;/import java.io.FileOutputStream;\nimport java.io.InputStream;\nimport java.io.OutputStream;/' app/src/main/java/com/termux/app/TermuxInstaller.java
-
+    
     echo "  ✅ Manual fix applied"
 else
     echo "  ✅ local-bootstraps patch already applied"
@@ -103,50 +78,117 @@ fi
 cd ..
 
 # ============================================================
-# 提取源码
+# 构建 bootstrap (用于获取 xz 工具)
 # ============================================================
-echo "Extracting sources..."
+echo "Building bootstrap to get xz tools..."
+cd termux-packages-src
+
+./scripts/run-docker.sh ./scripts/build-bootstraps.sh \
+    --architectures aarch64 \
+    --add xkeyboard-config \
+    --disable-bootstrap-second-stage
+
+mkdir -p ../output/bootstrap
+cp bootstrap-*.tar.xz ../output/bootstrap/ 2>/dev/null || true
+cp -r xz-* ../output/bootstrap/ 2>/dev/null || true
+
+cd ..
+
+# ============================================================
+# 提取完整源码
+# ============================================================
+echo "Extracting full sources..."
 OUTPUT="output/termux-sources"
 mkdir -p "$OUTPUT"
 
-# 复制所有模块
-cp -r termux-app-src/app "$OUTPUT/"
-cp -r termux-app-src/terminal-emulator "$OUTPUT/"
-cp -r termux-app-src/terminal-view "$OUTPUT/"
-cp -r termux-app-src/termux-shared "$OUTPUT/"
-cp -r termux-app-src/termux-am-library "$OUTPUT/" 2>/dev/null || true
-cp termux-app-src/build.gradle "$OUTPUT/" 2>/dev/null || true
-cp termux-app-src/settings.gradle "$OUTPUT/" 2>/dev/null || true
+# 复制所有模块 (完整)
+cp -r termux-app-src/* "$OUTPUT/"
+
+# 复制 bootstrap 到 assets
+mkdir -p "$OUTPUT/app/src/main/assets"
+cp output/bootstrap/bootstrap-*.tar.xz "$OUTPUT/app/src/main/assets/" 2>/dev/null || true
+
+for arch in aarch64 arm i686 x86_64; do
+    if [ -d "output/bootstrap/xz-$arch" ]; then
+        mkdir -p "$OUTPUT/app/src/main/assets/xz-$arch"
+        cp output/bootstrap/xz-$arch/* "$OUTPUT/app/src/main/assets/xz-$arch/" 2>/dev/null || true
+    fi
+done
+
+# 确保所有必需的目录存在
+mkdir -p "$OUTPUT/app/src/main/java/com/termux/app"
+mkdir -p "$OUTPUT/app/src/main/java/com/termux/app/activities"
+mkdir -p "$OUTPUT/app/src/main/java/com/termux/app/api/file"
+mkdir -p "$OUTPUT/app/src/main/java/com/termux/app/event"
+mkdir -p "$OUTPUT/app/src/main/java/com/termux/app/fragments/settings"
+mkdir -p "$OUTPUT/app/src/main/java/com/termux/app/models"
+mkdir -p "$OUTPUT/app/src/main/java/com/termux/app/terminal"
+mkdir -p "$OUTPUT/app/src/main/java/com/termux/app/terminal/io"
+mkdir -p "$OUTPUT/app/src/main/java/com/termux/filepicker"
+mkdir -p "$OUTPUT/app/src/main/res"
 
 # ============================================================
-# 验证最终结果
+# 验证源码完整性
 # ============================================================
 echo ""
 echo "=========================================="
-echo "Verification:"
+echo "Verifying source integrity:"
 
+FILES=(
+    "app/src/main/java/com/termux/app/TermuxActivity.java"
+    "app/src/main/java/com/termux/app/TermuxService.java"
+    "app/src/main/java/com/termux/app/TermuxInstaller.java"
+    "app/src/main/java/com/termux/app/TermuxApplication.java"
+    "app/src/main/java/com/termux/app/RunCommandService.java"
+    "app/src/main/java/com/termux/app/TermuxOpenReceiver.java"
+    "app/src/main/java/com/termux/app/activities/HelpActivity.java"
+    "app/src/main/java/com/termux/app/activities/SettingsActivity.java"
+    "app/src/main/java/com/termux/app/api/file/FileReceiverActivity.java"
+    "app/src/main/java/com/termux/app/event/SystemEventReceiver.java"
+    "app/src/main/java/com/termux/app/terminal/TermuxTerminalViewClient.java"
+    "app/src/main/java/com/termux/app/terminal/TermuxActivityRootView.java"
+    "app/src/main/java/com/termux/app/terminal/TermuxSessionsListViewController.java"
+    "app/src/main/java/com/termux/app/terminal/TermuxTerminalSessionActivityClient.java"
+    "app/src/main/java/com/termux/app/terminal/io/TermuxTerminalExtraKeys.java"
+    "app/src/main/java/com/termux/app/fragments/settings/TermuxPreferencesFragment.java"
+    "app/src/main/java/com/termux/app/models/UserAction.java"
+    "app/src/main/java/com/termux/filepicker/TermuxDocumentsProvider.java"
+    "app/src/main/AndroidManifest.xml"
+)
+
+MISSING=0
+for file in "${FILES[@]}"; do
+    if [ -f "$OUTPUT/$file" ]; then
+        echo "  ✅ $file"
+    else
+        echo "  ❌ $file MISSING"
+        MISSING=1
+    fi
+done
+
+if [ $MISSING -eq 0 ]; then
+    echo "  ✅ All files present"
+else
+    echo "  ⚠️ Some files missing"
+fi
+
+# 验证 bootstrap patch
 if grep -q "AssetManager" "$OUTPUT/app/src/main/java/com/termux/app/TermuxInstaller.java" 2>/dev/null; then
-    echo "  ✅ AssetManager found - bootstrap will use assets"
+    echo "  ✅ AssetManager found - bootstrap uses assets"
 else
-    echo "  ❌ AssetManager NOT found - bootstrap still uses SO"
+    echo "  ❌ AssetManager NOT found"
 fi
 
-if grep -q "runEarlyCommand" "$OUTPUT/app/src/main/java/com/termux/app/TermuxInstaller.java" 2>/dev/null; then
-    echo "  ✅ runEarlyCommand found"
+if grep -q "bootstrap.*xz" "$OUTPUT/app/src/main/java/com/termux/app/TermuxInstaller.java" 2>/dev/null; then
+    echo "  ✅ bootstrap uses .xz"
 else
-    echo "  ❌ runEarlyCommand NOT found"
+    echo "  ❌ bootstrap does NOT use .xz"
 fi
 
-if grep -q "determineTermuxArchName" "$OUTPUT/app/src/main/java/com/termux/app/TermuxInstaller.java" 2>/dev/null; then
-    echo "  ✅ determineTermuxArchName found"
+if [ -f "$OUTPUT/app/src/main/assets/bootstrap-aarch64.tar.xz" ]; then
+    echo "  ✅ bootstrap-aarch64.tar.xz present"
 else
-    echo "  ❌ determineTermuxArchName NOT found"
-fi
-
-if grep -q "loadZipBytes" "$OUTPUT/app/src/main/java/com/termux/app/TermuxInstaller.java" 2>/dev/null; then
-    echo "  ❌ loadZipBytes still exists - patch may be incomplete"
-else
-    echo "  ✅ loadZipBytes removed - bootstrap will use xz"
+    echo "  ❌ bootstrap-aarch64.tar.xz MISSING"
 fi
 
 echo "=========================================="

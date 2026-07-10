@@ -17,7 +17,6 @@ echo "=========================================="
 
 # Clone
 git clone --depth 1 https://github.com/termux/termux-app.git termux-app-src
-git clone --depth 1 https://github.com/termux/termux-packages.git termux-packages-src
 git clone --depth 1 https://github.com/termux/termux-am-library.git termux-am-library-src
 
 # Move termux-am-library
@@ -34,21 +33,6 @@ echo "Applying app patches..."
 cd termux-app-src
 
 for p in ../$APP_TYPE-patches/app-patches/*.patch; do
-    if [ -f "$p" ]; then
-        echo "  Applying: $(basename $p)"
-        patch -p1 < "$p" 2>/dev/null || echo "  Warning: $(basename $p) failed"
-    fi
-done
-
-cd ..
-
-# ============================================================
-# 应用 bootstrap patches
-# ============================================================
-echo "Applying bootstrap patches..."
-cd termux-packages-src
-
-for p in ../$APP_TYPE-patches/bootstrap-patches/*.patch; do
     if [ -f "$p" ]; then
         echo "  Applying: $(basename $p)"
         patch -p1 < "$p" 2>/dev/null || echo "  Warning: $(basename $p) failed"
@@ -78,54 +62,28 @@ fi
 cd ..
 
 # ============================================================
-# 构建 bootstrap (用于获取 xz 工具)
+# 提取完整源码 (不包含 bootstrap)
 # ============================================================
-echo "Building bootstrap to get xz tools..."
-cd termux-packages-src
-
-./scripts/run-docker.sh ./scripts/build-bootstraps.sh \
-    --architectures aarch64 \
-    --add xkeyboard-config \
-    --disable-bootstrap-second-stage
-
-mkdir -p ../output/bootstrap
-cp bootstrap-*.tar.xz ../output/bootstrap/ 2>/dev/null || true
-cp -r xz-* ../output/bootstrap/ 2>/dev/null || true
-
-cd ..
-
-# ============================================================
-# 提取完整源码
-# ============================================================
-echo "Extracting full sources..."
+echo "Extracting full sources (without bootstrap)..."
 OUTPUT="output/termux-sources"
 mkdir -p "$OUTPUT"
 
 # 复制所有模块 (完整)
 cp -r termux-app-src/* "$OUTPUT/"
 
-# 复制 bootstrap 到 assets
-mkdir -p "$OUTPUT/app/src/main/assets"
-cp output/bootstrap/bootstrap-*.tar.xz "$OUTPUT/app/src/main/assets/" 2>/dev/null || true
+# 删除 bootstrap zip 文件 (如果有)
+find "$OUTPUT" -name "bootstrap-*.zip" -delete 2>/dev/null || true
+find "$OUTPUT" -name "bootstrap-*.tar.xz" -delete 2>/dev/null || true
 
-for arch in aarch64 arm i686 x86_64; do
-    if [ -d "output/bootstrap/xz-$arch" ]; then
-        mkdir -p "$OUTPUT/app/src/main/assets/xz-$arch"
-        cp output/bootstrap/xz-$arch/* "$OUTPUT/app/src/main/assets/xz-$arch/" 2>/dev/null || true
-    fi
-done
-
-# 确保所有必需的目录存在
-mkdir -p "$OUTPUT/app/src/main/java/com/termux/app"
-mkdir -p "$OUTPUT/app/src/main/java/com/termux/app/activities"
-mkdir -p "$OUTPUT/app/src/main/java/com/termux/app/api/file"
-mkdir -p "$OUTPUT/app/src/main/java/com/termux/app/event"
-mkdir -p "$OUTPUT/app/src/main/java/com/termux/app/fragments/settings"
-mkdir -p "$OUTPUT/app/src/main/java/com/termux/app/models"
-mkdir -p "$OUTPUT/app/src/main/java/com/termux/app/terminal"
-mkdir -p "$OUTPUT/app/src/main/java/com/termux/app/terminal/io"
-mkdir -p "$OUTPUT/app/src/main/java/com/termux/filepicker"
-mkdir -p "$OUTPUT/app/src/main/res"
+# 删除临时文件和构建产物
+rm -rf "$OUTPUT/.git"
+rm -rf "$OUTPUT/.gradle"
+rm -rf "$OUTPUT/build"
+rm -rf "$OUTPUT/app/build"
+rm -rf "$OUTPUT/app/.cxx"
+rm -rf "$OUTPUT/terminal-emulator/build"
+rm -rf "$OUTPUT/terminal-view/build"
+rm -rf "$OUTPUT/termux-shared/build"
 
 # ============================================================
 # 验证源码完整性
@@ -154,6 +112,9 @@ FILES=(
     "app/src/main/java/com/termux/app/models/UserAction.java"
     "app/src/main/java/com/termux/filepicker/TermuxDocumentsProvider.java"
     "app/src/main/AndroidManifest.xml"
+    "terminal-emulator/src/main/java/com/termux/terminal/TerminalEmulator.java"
+    "terminal-view/src/main/java/com/termux/view/TerminalView.java"
+    "termux-shared/src/main/java/com/termux/shared/termux/TermuxConstants.java"
 )
 
 MISSING=0
@@ -179,16 +140,10 @@ else
     echo "  ❌ AssetManager NOT found"
 fi
 
-if grep -q "bootstrap.*xz" "$OUTPUT/app/src/main/java/com/termux/app/TermuxInstaller.java" 2>/dev/null; then
-    echo "  ✅ bootstrap uses .xz"
+if grep -q "loadZipBytes" "$OUTPUT/app/src/main/java/com/termux/app/TermuxInstaller.java" 2>/dev/null; then
+    echo "  ❌ loadZipBytes still exists"
 else
-    echo "  ❌ bootstrap does NOT use .xz"
-fi
-
-if [ -f "$OUTPUT/app/src/main/assets/bootstrap-aarch64.tar.xz" ]; then
-    echo "  ✅ bootstrap-aarch64.tar.xz present"
-else
-    echo "  ❌ bootstrap-aarch64.tar.xz MISSING"
+    echo "  ✅ loadZipBytes removed"
 fi
 
 echo "=========================================="
