@@ -1,100 +1,112 @@
 #!/bin/bash
 set -e
 
-ARCHITECTURES="aarch64"
-ADDITIONAL_PACKAGES="xkeyboard-config"
 APP_TYPE="f-droid"
+PACKAGE_NAME="com.UIN.Tool"
 
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --architectures) ARCHITECTURES="$2"; shift 2 ;;
-        --additional-packages) ADDITIONAL_PACKAGES="$2"; shift 2 ;;
         --app-type) APP_TYPE="$2"; shift 2 ;;
         *) echo "Unknown: $1"; exit 1 ;;
     esac
 done
 
 echo "=========================================="
-echo "Generating Termux sources..."
-echo "Architectures: $ARCHITECTURES"
-echo "Additional packages: $ADDITIONAL_PACKAGES"
+echo "Generating Termux app sources..."
 echo "App type: $APP_TYPE"
+echo "Package name: $PACKAGE_NAME"
 echo "=========================================="
 
 # Clone
 git clone --depth 1 https://github.com/termux/termux-app.git termux-app-src
-git clone --depth 1 https://github.com/termux/termux-packages.git termux-packages-src
 git clone --depth 1 https://github.com/termux/termux-am-library.git termux-am-library-src
 
 # Move termux-am-library
-mv termux-am-library-src/termux-am-library/ termux-app-src/termux-am-library 2>/dev/null || true
+if [ -d "termux-am-library-src/termux-am-library" ]; then
+    mkdir -p termux-app-src/termux-am-library
+    cp -r termux-am-library-src/termux-am-library/* termux-app-src/termux-am-library/
+fi
 rm -rf termux-am-library-src
 
-# Apply app patches
+# Apply patches
 if [ -d "$APP_TYPE-patches/app-patches" ]; then
     echo "Applying app patches..."
     cd termux-app-src
     for p in ../$APP_TYPE-patches/app-patches/*.patch; do
         if [ -f "$p" ]; then
             echo "Applying: $(basename $p)"
-            patch -p1 < "$p" || echo "Warning: patch $(basename $p) failed"
+            patch -p1 < "$p" 2>/dev/null || echo "Warning: patch $(basename $p) skipped"
         fi
     done
     cd ..
 fi
 
-# Apply bootstrap patches
-if [ -d "$APP_TYPE-patches/bootstrap-patches" ]; then
-    echo "Applying bootstrap patches..."
-    cd termux-packages-src
-    for p in ../$APP_TYPE-patches/bootstrap-patches/*.patch; do
-        if [ -f "$p" ]; then
-            echo "Applying: $(basename $p)"
-            patch -p1 < "$p" || echo "Warning: patch $(basename $p) failed"
-        fi
-    done
-    cd ..
-fi
+# Replace package name
+echo "Replacing package name: com.termux -> $PACKAGE_NAME"
+cd termux-app-src
 
-# Build bootstrap
-echo "Building bootstrap..."
-cd termux-packages-src
-./scripts/run-docker.sh ./scripts/build-bootstraps.sh \
-    --architectures "$ARCHITECTURES" \
-    --add "$ADDITIONAL_PACKAGES" \
-    --disable-bootstrap-second-stage
+# Find and replace in all text files
+find . -type f -exec file {} + | grep "text" | cut -d: -f1 | while read -r file; do
+    sed -i "s/com\.termux/$PACKAGE_NAME/g" "$file" 2>/dev/null || true
+    sed -i "s/com_termux/$(echo $PACKAGE_NAME | tr . _)/g" "$file" 2>/dev/null || true
+    sed -i "s/com\/termux/$(echo $PACKAGE_NAME | tr . /)/g" "$file" 2>/dev/null || true
+done
 
-mkdir -p ../output/bootstrap
-cp bootstrap-*.tar.xz ../output/bootstrap/ 2>/dev/null || true
-cp -r xz-* ../output/bootstrap/ 2>/dev/null || true
-cd ..
-
-# Extract terminal-emulator
-echo "Extracting terminal-emulator module..."
-OUTPUT="output/terminal-emulator"
-mkdir -p "$OUTPUT"
-
-cp -r termux-app-src/terminal-emulator "$OUTPUT/"
-cp -r termux-app-src/terminal-view "$OUTPUT/"
-cp -r termux-app-src/termux-shared "$OUTPUT/"
-
-mkdir -p "$OUTPUT/jni"
-cp -r termux-app-src/src/main/jni/*.c "$OUTPUT/jni/" 2>/dev/null || true
-cp -r termux-app-src/src/main/jni/Android.mk "$OUTPUT/jni/" 2>/dev/null || true
-
-mkdir -p "$OUTPUT/assets"
-cp output/bootstrap/bootstrap-*.tar.xz "$OUTPUT/assets/" 2>/dev/null || true
-
-for arch in ${ARCHITECTURES//,/ }; do
-    if [ -d "output/bootstrap/xz-$arch" ]; then
-        mkdir -p "$OUTPUT/assets/xz-$arch"
-        cp output/bootstrap/xz-$arch/* "$OUTPUT/assets/xz-$arch/" 2>/dev/null || true
+# Rename Java package directories
+echo "Renaming Java package directories..."
+find . -type d -path "*/com/termux" | while read -r dir; do
+    parent=$(dirname "$dir")
+    new_parent=$(echo "$parent" | sed "s/com/$(echo $PACKAGE_NAME | cut -d. -f1)/")
+    new_dir="$new_parent/$(echo $PACKAGE_NAME | cut -d. -f2-)"
+    mkdir -p "$new_parent"
+    if [ -d "$dir" ] && [ ! -d "$new_dir" ]; then
+        mv "$dir" "$new_dir"
     fi
 done
 
-mkdir -p "$OUTPUT/res"
-cp -r termux-app-src/src/main/res/* "$OUTPUT/res/" 2>/dev/null || true
+cd ..
 
-echo "=========================================="
-echo "Done! Output: $OUTPUT"
-echo "=========================================="
+# Extract full app source
+echo "Extracting full app source..."
+OUTPUT="output/termux-app"
+mkdir -p "$OUTPUT"
+
+# Copy entire app source
+cp -r termux-app-src/* "$OUTPUT/"
+
+# Remove unnecessary build artifacts
+rm -rf "$OUTPUT/.git"
+rm -rf "$OUTPUT/.gradle"
+rm -rf "$OUTPUT/build"
+rm -rf "$OUTPUT/app/build"
+rm -rf "$OUTPUT/app/.cxx"
+rm -rf "$OUTPUT/terminal-emulator/build"
+rm -rf "$OUTPUT/terminal-view/build"
+rm -rf "$OUTPUT/termux-shared/build"
+
+# Remove bootstrap zip files (since we don't need them)
+find "$OUTPUT" -name "bootstrap-*.zip" -delete 2>/dev/null || true
+
+# Generate README
+cat > "$OUTPUT/README.md" << 'EOF'
+# Termux App Sources for UIN Tool
+
+This is Termux app source code with package name changed to com.UIN.Tool.
+
+## Directory Structure
+
+- app/                 - Main Termux app
+- terminal-emulator/   - Terminal emulation core
+- terminal-view/       - Terminal view and rendering
+- termux-shared/       - Shared utilities
+- termux-am-library/   - AM library
+
+## Usage
+
+Copy the entire directory to your project or use as a module.
+
+## Build
+
+```bash
+cd app
+./gradlew assembleDebug

@@ -3,14 +3,6 @@ name: Generate Termux Sources
 on:
   workflow_dispatch:
     inputs:
-      architectures:
-        description: "Specify the bootstrap architectures to include in a comma-separated list [aarch64,arm,x86_64,i686]."
-        required: false
-        default: "aarch64"
-      add:
-        description: "Include additional packages in bootstrap in a comma-separated list."
-        required: false
-        default: "xkeyboard-config"
       type:
         description: "Specify the Termux project to fork [f-droid, play-store]. Defaults to f-droid."
         required: false
@@ -23,14 +15,6 @@ jobs:
       - name: Clone repository
         uses: actions/checkout@v4
 
-      - name: Set --architectures
-        if: "${{ github.event.inputs.architectures != '' }}"
-        run: echo "BOOTSTRAP_ARCHITECTURES=--architectures ${{ github.event.inputs.architectures }}" >> $GITHUB_ENV
-
-      - name: Set --add
-        if: "${{ github.event.inputs.add != '' }}"
-        run: echo "ADDITIONAL_PACKAGES=--additional-packages ${{ github.event.inputs.add }}" >> $GITHUB_ENV
-
       - name: Set --type
         if: "${{ github.event.inputs.type != '' }}"
         run: echo "APP_TYPE=--app-type ${{ github.event.inputs.type }}" >> $GITHUB_ENV
@@ -38,21 +22,11 @@ jobs:
       - name: Generate Sources
         run: |
           chmod +x scripts/generate-sources.sh
-          ./scripts/generate-sources.sh \
-            $BOOTSTRAP_ARCHITECTURES \
-            $ADDITIONAL_PACKAGES \
-            $APP_TYPE
+          ./scripts/generate-sources.sh $APP_TYPE
 
-      - name: Upload terminal-emulator module
+      - name: Upload source package
         uses: actions/upload-artifact@v4.6.0
         with:
-          name: terminal-emulator-module
-          path: output/terminal-emulator/
-          retention-days: 30
-
-      - name: Upload bootstrap
-        uses: actions/upload-artifact@v4.6.0
-        with:
-          name: termux-bootstrap
-          path: output/terminal-emulator/assets/bootstrap-*.tar.xz
+          name: termux-app-sources
+          path: output/termux-app/
           retention-days: 30
