@@ -37,7 +37,7 @@ jobs:
           sudo apt-get install -y docker.io
           sudo systemctl start docker
 
-      - name: Generate
+      - name: Generate Sources
         run: |
           chmod +x scripts/generate-sources.sh
           ./scripts/generate-sources.sh \
@@ -45,7 +45,7 @@ jobs:
             --additional-packages "${{ inputs.additional_packages }}" \
             --app-type "${{ inputs.app_type }}"
 
-      - name: Upload artifacts
+      - name: Upload terminal-emulator module
         uses: actions/upload-artifact@v4
         with:
           name: terminal-emulator-module
