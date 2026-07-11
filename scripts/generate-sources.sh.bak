@@ -20,7 +20,8 @@ apply_patches() {
 
     for patch in $patches; do
         echo "  Applying: $(basename "$patch")"
-        patch -p1 < "$patch" || echo "  ⚠️ Warning: $(basename "$patch") failed"
+        # 使用 --no-backup-if-mismatch 防止生成 .orig 文件
+        patch -p1 --no-backup-if-mismatch < "$patch" || echo "  ⚠️ Warning: $(basename "$patch") failed"
     done
 
     popd > /dev/null
@@ -64,10 +65,19 @@ else
 fi
 
 # ============================================================
-# 3. 验证 local-bootstraps patch
+# 3. 删除所有 .orig 文件
 # ============================================================
 echo ""
-echo "[3/4] Verifying local-bootstraps patch..."
+echo "[3/5] Removing .orig files..."
+
+find termux-apps-main -name "*.orig" -type f -delete 2>/dev/null || true
+echo "  ✅ .orig files removed"
+
+# ============================================================
+# 4. 验证 local-bootstraps patch
+# ============================================================
+echo ""
+echo "[4/5] Verifying local-bootstraps patch..."
 
 INSTALLER_FILE="termux-apps-main/termux-app/app/src/main/java/com/termux/app/TermuxInstaller.java"
 
@@ -85,10 +95,10 @@ else
 fi
 
 # ============================================================
-# 4. 提取完整源码
+# 5. 提取完整源码
 # ============================================================
 echo ""
-echo "[4/4] Extracting full sources..."
+echo "[5/5] Extracting full sources..."
 
 OUTPUT="output/termux-sources"
 mkdir -p "$OUTPUT"
@@ -96,8 +106,8 @@ mkdir -p "$OUTPUT"
 # 复制 termux-app (已经 patch)
 cp -r termux-apps-main/termux-app "$OUTPUT/"
 
-# 复制其他模块 (termux-app 已经包含 terminal-emulator, terminal-view, termux-shared)
-# 不需要再单独复制
+# 删除 .orig 文件 (再次确保)
+find "$OUTPUT" -name "*.orig" -type f -delete 2>/dev/null || true
 
 # 删除 bootstrap 文件
 find "$OUTPUT" -name "bootstrap-*.zip" -delete 2>/dev/null || true
@@ -131,6 +141,14 @@ if grep -q "loadZipBytes" "$OUTPUT/app/src/main/java/com/termux/app/TermuxInstal
     echo "  ❌ loadZipBytes still exists"
 else
     echo "  ✅ loadZipBytes removed"
+fi
+
+# 检查 .orig 文件
+ORIG_COUNT=$(find "$OUTPUT" -name "*.orig" -type f 2>/dev/null | wc -l)
+if [ "$ORIG_COUNT" -eq 0 ]; then
+    echo "  ✅ No .orig files found"
+else
+    echo "  ⚠️ $ORIG_COUNT .orig files found"
 fi
 
 # 检查关键文件
