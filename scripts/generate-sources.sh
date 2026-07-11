@@ -1,21 +1,21 @@
 #!/bin/bash
 set -e
 
-TERMUX_APP_TYPE="f-droid"
-PACKAGE_NAME="com.UIN.Tool"
+# ============================================================
+# 加载工具函数
+# ============================================================
+portable_sed_i() {
+    if sed v </dev/null 2> /dev/null; then
+        sed -i "$@"
+    else
+        sed -i '' "$@"
+    fi
+}
 
-# ============================================================
-# 复制 apply_patches 函数
-# ============================================================
 apply_patches() {
     local srcdir=$(realpath "$1")
     local targetdir=$(realpath "$2")
     local patches=$(find "$srcdir" -type f | sort)
-
-    if [ -z "$patches" ]; then
-        echo "  No patches found in $srcdir"
-        return 1
-    fi
 
     pushd "$targetdir" > /dev/null
 
@@ -27,17 +27,80 @@ apply_patches() {
     popd > /dev/null
 }
 
+replace_termux_name() {
+    if [[ "$TERMUX_APP__PACKAGE_NAME" == "com.termux" ]]; then
+        return
+    fi
+    local targetdir="$1"
+    local replacement_name="$2"
+    local replacement_name_underscore="$(echo "$replacement_name" | tr . _)"
+    local replacement_name_slash="$(echo "$replacement_name" | tr . /)"
+
+    pushd "$targetdir" > /dev/null
+    
+    local file
+    find . -type f -exec file {} + | grep "text" | cut -d: -f1 | while read -r file; do
+        portable_sed_i -e "s|>Termux<|>$replacement_name<|g" \
+                       -e "s|\"Termux\"|\"$replacement_name\"|g" \
+                       -e "s|Termux:|$replacement_name:|g" \
+                       -e "s|com\\.termux|$replacement_name|g" \
+                       -e "s|com_termux|$replacement_name_underscore|g" \
+                       -e '/http/!s|com/termux|'$replacement_name_slash'|g' "$file"
+    done
+
+    popd > /dev/null
+}
+
+migrate_termux_folder() {
+    if [[ "$TERMUX_APP__PACKAGE_NAME" == "com.termux" ]]; then
+        return
+    fi
+    local parentdir="$(dirname "$(dirname "$1")")"
+    local replacement_name="$2"
+    local destination="${parentdir}/$(echo "$replacement_name" | tr . /)/"
+
+    echo "  Migrating: ${parentdir}/com/termux/ -> ${destination}"
+    mkdir -p "${destination}"
+    if [ -d "${parentdir}/com/termux/" ]; then
+        mv "${parentdir}/com/termux/"* "${destination}" 2>/dev/null || true
+        rm -rf "${parentdir}/com/termux/" 2>/dev/null || true
+    fi
+}
+
+migrate_termux_folder_tree() {
+    if [[ "$TERMUX_APP__PACKAGE_NAME" == "com.termux" ]]; then
+        return
+    fi
+    local targetdir="$1"
+    local replacement_name="$2"
+
+    pushd "$targetdir" > /dev/null
+
+    local dir
+    find "$(pwd)" -type d -name termux | grep -v -e 'shared/termux' -e 'settings/termux' | while read -r dir; do
+        migrate_termux_folder "$dir" "$replacement_name"
+    done
+
+    popd > /dev/null
+}
+
+# ============================================================
+# 配置
+# ============================================================
+TERMUX_APP_TYPE="f-droid"
+TERMUX_APP__PACKAGE_NAME="com.UIN.Tool"
+
 echo "=========================================="
 echo "Generating Termux sources with patches"
 echo "App type: $TERMUX_APP_TYPE"
-echo "Package name: $PACKAGE_NAME"
+echo "Package name: $TERMUX_APP__PACKAGE_NAME"
 echo "=========================================="
 
 # ============================================================
 # 1. 下载源码
 # ============================================================
 echo ""
-echo "[1/6] Downloading sources..."
+echo "[1/5] Downloading sources..."
 
 rm -rf termux-apps-main
 mkdir -p termux-apps-main
@@ -56,7 +119,7 @@ rm -rf termux-am-library-src
 # 2. 应用 app patches
 # ============================================================
 echo ""
-echo "[2/6] Applying app patches..."
+echo "[2/5] Applying app patches..."
 
 if [ -d "$TERMUX_APP_TYPE-patches/app-patches" ]; then
     apply_patches "$TERMUX_APP_TYPE-patches/app-patches" "termux-apps-main"
@@ -69,65 +132,29 @@ fi
 # 3. 删除 .orig 文件
 # ============================================================
 echo ""
-echo "[3/6] Removing .orig files..."
+echo "[3/5] Removing .orig files..."
 find termux-apps-main -name "*.orig" -type f -delete 2>/dev/null || true
 echo "  ✅ .orig files removed"
 
 # ============================================================
-# 4. 替换包名 com.termux -> com.UIN.Tool
+# 4. 替换包名
 # ============================================================
 echo ""
-echo "[4/6] Replacing package name: com.termux -> $PACKAGE_NAME"
+echo "[4/5] Replacing package name: com.termux -> $TERMUX_APP__PACKAGE_NAME"
 
-cd termux-apps-main/termux-app
-
-# 替换所有文本文件中的包名
-find . -type f -exec file {} + | grep "text" | cut -d: -f1 | while read -r file; do
-    sed -i "s/com\.termux/$PACKAGE_NAME/g" "$file" 2>/dev/null || true
-    sed -i "s/com_termux/$(echo $PACKAGE_NAME | tr . _)/g" "$file" 2>/dev/null || true
-done
-
-# 重命名 Java 包目录
-echo "  Renaming Java package directories..."
-find . -type d -path "*/com/termux" | while read -r dir; do
-    parent=$(dirname "$dir")
-    # com/termux -> com/UIN/Tool
-    new_dir="$parent/$(echo $PACKAGE_NAME | tr . /)"
-    if [ -d "$dir" ] && [ ! -d "$new_dir" ]; then
-        mkdir -p "$(dirname "$new_dir")"
-        mv "$dir" "$new_dir"
-    fi
-done
-
-cd ../..
-
-echo "  ✅ Package name replaced"
-
-# ============================================================
-# 5. 验证 local-bootstraps patch
-# ============================================================
-echo ""
-echo "[5/6] Verifying local-bootstraps patch..."
-
-INSTALLER_FILE="termux-apps-main/termux-app/app/src/main/java/$(echo $PACKAGE_NAME | tr . /)/app/TermuxInstaller.java"
-
-if grep -q "import android.content.res.AssetManager" "$INSTALLER_FILE" 2>/dev/null; then
-    echo "  ✅ local-bootstraps patch applied successfully"
+if [ "$TERMUX_APP__PACKAGE_NAME" != "com.termux" ]; then
+    replace_termux_name "termux-apps-main/termux-app" "$TERMUX_APP__PACKAGE_NAME"
+    migrate_termux_folder_tree "termux-apps-main/termux-app" "$TERMUX_APP__PACKAGE_NAME"
+    echo "  ✅ Package name replaced"
 else
-    echo "  ❌ local-bootstraps patch NOT applied - applying manually..."
-
-    sed -i 's/import android.content.Context;/import android.content.Context;\nimport android.content.res.AssetManager;/' "$INSTALLER_FILE"
-    sed -i 's/import java.io.FileOutputStream;/import java.io.FileOutputStream;\nimport java.io.InputStream;\nimport java.io.OutputStream;/' "$INSTALLER_FILE"
-    sed -i '/public static native byte\[\] getZip();/d' "$INSTALLER_FILE"
-
-    echo "  ✅ Manual patch applied"
+    echo "  ℹ️ Package name unchanged (com.termux)"
 fi
 
 # ============================================================
-# 6. 提取完整源码
+# 5. 提取完整源码
 # ============================================================
 echo ""
-echo "[6/6] Extracting full sources..."
+echo "[5/5] Extracting full sources..."
 
 OUTPUT="output/termux-sources"
 mkdir -p "$OUTPUT"
@@ -136,82 +163,4 @@ mkdir -p "$OUTPUT"
 cp -r termux-apps-main/termux-app "$OUTPUT/"
 
 # 删除 .orig 文件
-find "$OUTPUT" -name "*.orig" -type f -delete 2>/dev/null || true
-
-# 删除 bootstrap 文件
-find "$OUTPUT" -name "bootstrap-*.zip" -delete 2>/dev/null || true
-find "$OUTPUT" -name "bootstrap-*.tar.xz" -delete 2>/dev/null || true
-find "$OUTPUT" -name "bootstrap-*" -delete 2>/dev/null || true
-
-# 删除构建产物
-rm -rf "$OUTPUT/.git"
-rm -rf "$OUTPUT/.gradle"
-rm -rf "$OUTPUT/build"
-rm -rf "$OUTPUT/app/build"
-rm -rf "$OUTPUT/app/.cxx"
-rm -rf "$OUTPUT/terminal-emulator/build"
-rm -rf "$OUTPUT/terminal-view/build"
-rm -rf "$OUTPUT/termux-shared/build"
-
-# ============================================================
-# 验证
-# ============================================================
-echo ""
-echo "=========================================="
-echo "Verification:"
-
-# 验证包名
-if grep -r "com.termux" "$OUTPUT/app/src/main/java" --include="*.java" 2>/dev/null | grep -v "com.termux" | head -5; then
-    echo "  ⚠️ Some com.termux references may remain"
-else
-    echo "  ✅ Package name replaced"
-fi
-
-# 验证 patch
-if grep -q "AssetManager" "$OUTPUT/app/src/main/java/$(echo $PACKAGE_NAME | tr . /)/app/TermuxInstaller.java" 2>/dev/null; then
-    echo "  ✅ AssetManager found"
-else
-    echo "  ❌ AssetManager NOT found"
-fi
-
-if grep -q "loadZipBytes" "$OUTPUT/app/src/main/java/$(echo $PACKAGE_NAME | tr . /)/app/TermuxInstaller.java" 2>/dev/null; then
-    echo "  ❌ loadZipBytes still exists"
-else
-    echo "  ✅ loadZipBytes removed"
-fi
-
-# 检查 .orig 文件
-ORIG_COUNT=$(find "$OUTPUT" -name "*.orig" -type f 2>/dev/null | wc -l)
-if [ "$ORIG_COUNT" -eq 0 ]; then
-    echo "  ✅ No .orig files found"
-else
-    echo "  ⚠️ $ORIG_COUNT .orig files found"
-fi
-
-# 检查关键文件
-echo ""
-echo "Key files:"
-NEW_PACKAGE_PATH=$(echo $PACKAGE_NAME | tr . /)
-for file in \
-    "app/src/main/java/$NEW_PACKAGE_PATH/app/TermuxActivity.java" \
-    "app/src/main/java/$NEW_PACKAGE_PATH/app/TermuxInstaller.java" \
-    "app/src/main/AndroidManifest.xml" \
-    "terminal-emulator/src/main/java/$NEW_PACKAGE_PATH/terminal/TerminalEmulator.java" \
-    "terminal-emulator/src/main/jni/termux.c" \
-    "terminal-view/src/main/java/$NEW_PACKAGE_PATH/view/TerminalView.java" \
-    "termux-shared/src/main/java/$NEW_PACKAGE_PATH/shared/termux/TermuxConstants.java" \
-    "build.gradle" \
-    "settings.gradle"
-do
-    if [ -f "$OUTPUT/$file" ]; then
-        echo "  ✅ $file"
-    else
-        echo "  ❌ $file MISSING"
-    fi
-done
-
-echo ""
-echo "=========================================="
-echo "Done! Output: $OUTPUT"
-echo "Package name: $PACKAGE_NAME"
-echo "=========================================="
+find
