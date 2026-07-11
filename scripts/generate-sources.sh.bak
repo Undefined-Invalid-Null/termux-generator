@@ -17,7 +17,6 @@ echo "=========================================="
 
 # Clone
 git clone --depth 1 https://github.com/termux/termux-app.git termux-app-src
-git clone --depth 1 https://github.com/termux/termux-packages.git termux-packages-src
 git clone --depth 1 https://github.com/termux/termux-am-library.git termux-am-library-src
 
 # Move termux-am-library
@@ -28,7 +27,7 @@ fi
 rm -rf termux-am-library-src
 
 # ============================================================
-# 应用 app patches
+# 应用所有 app patches
 # ============================================================
 echo "Applying app patches..."
 cd termux-app-src
@@ -36,40 +35,173 @@ cd termux-app-src
 for p in ../$APP_TYPE-patches/app-patches/*.patch; do
     if [ -f "$p" ]; then
         echo "  Applying: $(basename $p)"
-        patch -p1 < "$p" 2>/dev/null || echo "  Warning: $(basename $p) failed"
+        patch -p1 < "$p" || echo "  Warning: $(basename $p) failed"
     fi
 done
 
 cd ..
 
 # ============================================================
-# 应用 bootstrap patches
-# ============================================================
-echo "Applying bootstrap patches..."
-cd termux-packages-src
-
-for p in ../$APP_TYPE-patches/bootstrap-patches/*.patch; do
-    if [ -f "$p" ]; then
-        echo "  Applying: $(basename $p)"
-        patch -p1 < "$p" 2>/dev/null || echo "  Warning: $(basename $p) failed"
-    fi
-done
-
-cd ..
-
-# ============================================================
-# 验证并强制修复 local-bootstraps patch
+# 验证 local-bootstraps patch 是否应用成功
 # ============================================================
 echo "Verifying local-bootstraps patch..."
 
 cd termux-app-src
 
 if ! grep -q "import android.content.res.AssetManager" app/src/main/java/com/termux/app/TermuxInstaller.java 2>/dev/null; then
-    echo "  Applying local-bootstraps patch manually..."
+    echo "  ❌ local-bootstraps patch NOT applied - applying manually..."
     
-    sed -i 's/import android.content.Context;/import android.content.Context;\nimport android.content.res.AssetManager;/' app/src/main/java/com/termux/app/TermuxInstaller.java
-    sed -i 's/import java.io.FileOutputStream;/import java.io.FileOutputStream;\nimport java.io.InputStream;\nimport java.io.OutputStream;/' app/src/main/java/com/termux/app/TermuxInstaller.java
-    
+    # 手动修改 TermuxInstaller.java
+    cat > /tmp/fix.patch << 'EOF'
+--- a/app/src/main/java/com/termux/app/TermuxInstaller.java
++++ b/app/src/main/java/com/termux/app/TermuxInstaller.java
+@@ -4,6 +4,7 @@
+ import android.app.AlertDialog;
+ import android.app.ProgressDialog;
+ import android.content.Context;
++import android.content.res.AssetManager;
+ import android.os.Build;
+ import android.os.Environment;
+ import android.system.Os;
+@@ -22,6 +23,8 @@
+ import java.io.ByteArrayInputStream;
+ import java.io.File;
+ import java.io.FileOutputStream;
++import java.io.InputStream;
++import java.io.OutputStream;
+ import java.io.InputStreamReader;
+ import java.util.ArrayList;
+ import java.util.List;
+@@ -153,62 +156,34 @@
+ 
+                     Logger.logInfo(LOG_TAG, "Extracting bootstrap zip to prefix staging directory \"" + TERMUX_STAGING_PREFIX_DIR_PATH + "\".");
+ 
+-                    final byte[] buffer = new byte[8096];
+-                    final List<Pair<String, String>> symlinks = new ArrayList<>(50);
+-
+-                    final byte[] zipBytes = loadZipBytes();
+-                    try (ZipInputStream zipInput = new ZipInputStream(new ByteArrayInputStream(zipBytes))) {
+-                        ZipEntry zipEntry;
+-                        while ((zipEntry = zipInput.getNextEntry()) != null) {
+-                            if (zipEntry.getName().equals("SYMLINKS.txt")) {
+-                                BufferedReader symlinksReader = new BufferedReader(new InputStreamReader(zipInput));
+-                                String line;
+-                                while ((line = symlinksReader.readLine()) != null) {
+-                                    String[] parts = line.split("←");
+-                                    if (parts.length != 2)
+-                                        throw new RuntimeException("Malformed symlink line: " + line);
+-                                    String oldPath = parts[0];
+-                                    String newPath = TERMUX_STAGING_PREFIX_DIR_PATH + "/" + parts[1];
+-                                    symlinks.add(Pair.create(oldPath, newPath));
+-
+-                                    error = ensureDirectoryExists(new File(newPath).getParentFile());
+-                                    if (error != null) {
+-                                        showBootstrapErrorDialog(activity, whenDone, Error.getErrorMarkdownString(error));
+-                                        return;
+-                                    }
+-                                }
+-                            } else {
+-                                String zipEntryName = zipEntry.getName();
+-                                File targetFile = new File(TERMUX_STAGING_PREFIX_DIR_PATH, zipEntryName);
+-                                boolean isDirectory = zipEntry.isDirectory();
+-
+-                                error = ensureDirectoryExists(isDirectory ? targetFile : targetFile.getParentFile());
+-                                if (error != null) {
+-                                    showBootstrapErrorDialog(activity, whenDone, Error.getErrorMarkdownString(error));
+-                                    return;
+-                                }
+-
+-                                if (!isDirectory) {
+-                                    try (FileOutputStream outStream = new FileOutputStream(targetFile)) {
+-                                        int readBytes;
+-                                        while ((readBytes = zipInput.read(buffer)) != -1)
+-                                            outStream.write(buffer, 0, readBytes);
+-                                    }
+-                                    if (zipEntryName.startsWith("bin/") || zipEntryName.startsWith("libexec") ||
+-                                        zipEntryName.startsWith("lib/apt/apt-helper") || zipEntryName.startsWith("lib/apt/methods")) {
+-                                        //noinspection OctalInteger
+-                                        Os.chmod(targetFile.getAbsolutePath(), 0700);
+-                                    }
+-                                }
+-                            }
++                    String decompressedBootstrapFilename = "bootstrap-" + determineTermuxArchName() + ".tar";
++                    String bootstrapFilename = decompressedBootstrapFilename + ".xz";
++                    String xzFilename = "xz-" + determineTermuxArchName() + "/xz";
++                    String liblzmaFilename = "xz-" + determineTermuxArchName() + "/liblzma.so.5";
++                    String decompressedBootstrapFilePath = TERMUX_FILES_DIR_PATH + "/" + decompressedBootstrapFilename;
++                    String bootstrapFilePath = decompressedBootstrapFilePath + ".xz";
++                    String xzFilePath = TERMUX_FILES_DIR_PATH + "/xz";
++                    String liblzmaFilePath = TERMUX_FILES_DIR_PATH + "/liblzma.so.5";
++                    String[] filenames = {bootstrapFilename, xzFilename, liblzmaFilename};
++                    String[] filePaths = {bootstrapFilePath, xzFilePath, liblzmaFilePath};
++                    Context ctx = activity.getApplicationContext();
++                    AssetManager assetManager = ctx.getAssets();
++                    for (int i = 0; i < filenames.length; i++) {
++                        InputStream inputStream = assetManager.open(filenames[i]);
++                        OutputStream outputStream = new FileOutputStream(filePaths[i]);
++                        int read;
++                        final byte[] buffer = new byte[8096];
++                        while((read = inputStream.read(buffer)) != -1){
++                            outputStream.write(buffer, 0, read);
+                         }
+-                    }
+-
+-                    if (symlinks.isEmpty())
+-                        throw new RuntimeException("No SYMLINKS.txt encountered");
+-                    for (Pair<String, String> symlink : symlinks) {
+-                        Os.symlink(symlink.first, symlink.second);
++                        inputStream.close();
++                        outputStream.flush();
++                        outputStream.close();
+                     }
++                    runEarlyCommand(ctx, "/system/bin/chmod +x " + xzFilePath);
++                    runEarlyCommand(ctx, xzFilePath + " -d " + bootstrapFilePath);
++                    runEarlyCommand(ctx, "/system/bin/tar -xf " + decompressedBootstrapFilePath + " -C " + TERMUX_STAGING_PREFIX_DIR_PATH);
++                    runEarlyCommand(ctx, "/system/bin/rm " + xzFilePath + " " + liblzmaFilePath + " " + decompressedBootstrapFilePath);
+ 
+                     Logger.logInfo(LOG_TAG, "Moving termux prefix staging to prefix directory.");
+ 
+@@ -239,6 +214,13 @@
+         }.start();
+     }
+ 
++    public static void runEarlyCommand(Context ctx, String cmd) {
++        ExecutionCommand executionCommand = new ExecutionCommand(-1, "/system/bin/sh", null, cmd + "\\n", "/", ExecutionCommand.Runner.APP_SHELL.getName(), true);
++        executionCommand.commandLabel = " TermuxInstaller Early Command";
++        executionCommand.backgroundCustomLogLevel = Logger.LOG_LEVEL_OFF;
++        AppShell appShell = AppShell.execute(ctx, executionCommand, null, new AndroidShellEnvironment(), null, true);
++    }
++
+     public static void showBootstrapErrorDialog(Activity activity, Runnable whenDone, String message) {
+         Logger.logErrorExtended(LOG_TAG, "Bootstrap Error:\\n" + message);
+ 
+@@ -375,12 +357,25 @@
+         return FileUtils.createDirectoryFile(directory.getAbsolutePath());
+     }
+ 
+-    public static byte[] loadZipBytes() {
+-        // Only load the shared library when necessary to save memory usage.
+-        System.loadLibrary("termux-bootstrap");
+-        return getZip();
++    private static String determineTermuxArchName() {
++        for (String androidArch : Build.SUPPORTED_ABIS) {
++            switch (androidArch) {
++                case "arm64-v8a": return "aarch64";
++                case "armeabi-v7a": return "arm";
++                case "x86_64": return "x86_64";
++                case "x86": return "i686";
++            }
++        }
++        throw new RuntimeException("Unable to determine arch from Build.SUPPORTED_ABIS =  " +
++            Arrays.toString(Build.SUPPORTED_ABIS));
+     }
+-
+-    public static native byte[] getZip();
+-
+ }
+EOF
+
+    patch -p1 < /tmp/fix.patch || echo "  Manual patch failed"
     echo "  ✅ Manual fix applied"
 else
     echo "  ✅ local-bootstraps patch already applied"
@@ -78,24 +210,7 @@ fi
 cd ..
 
 # ============================================================
-# 构建 bootstrap (用于获取 xz 工具)
-# ============================================================
-echo "Building bootstrap to get xz tools..."
-cd termux-packages-src
-
-./scripts/run-docker.sh ./scripts/build-bootstraps.sh \
-    --architectures aarch64 \
-    --add xkeyboard-config \
-    --disable-bootstrap-second-stage
-
-mkdir -p ../output/bootstrap
-cp bootstrap-*.tar.xz ../output/bootstrap/ 2>/dev/null || true
-cp -r xz-* ../output/bootstrap/ 2>/dev/null || true
-
-cd ..
-
-# ============================================================
-# 提取完整源码
+# 提取完整源码 (包含所有模块)
 # ============================================================
 echo "Extracting full sources..."
 OUTPUT="output/termux-sources"
@@ -104,36 +219,28 @@ mkdir -p "$OUTPUT"
 # 复制所有模块 (完整)
 cp -r termux-app-src/* "$OUTPUT/"
 
-# 复制 bootstrap 到 assets
-mkdir -p "$OUTPUT/app/src/main/assets"
-cp output/bootstrap/bootstrap-*.tar.xz "$OUTPUT/app/src/main/assets/" 2>/dev/null || true
+# 删除不必要的文件
+rm -rf "$OUTPUT/.git"
+rm -rf "$OUTPUT/.gradle"
+rm -rf "$OUTPUT/build"
+rm -rf "$OUTPUT/app/build"
+rm -rf "$OUTPUT/app/.cxx"
+rm -rf "$OUTPUT/terminal-emulator/build"
+rm -rf "$OUTPUT/terminal-view/build"
+rm -rf "$OUTPUT/termux-shared/build"
 
-for arch in aarch64 arm i686 x86_64; do
-    if [ -d "output/bootstrap/xz-$arch" ]; then
-        mkdir -p "$OUTPUT/app/src/main/assets/xz-$arch"
-        cp output/bootstrap/xz-$arch/* "$OUTPUT/app/src/main/assets/xz-$arch/" 2>/dev/null || true
-    fi
-done
-
-# 确保所有必需的目录存在
-mkdir -p "$OUTPUT/app/src/main/java/com/termux/app"
-mkdir -p "$OUTPUT/app/src/main/java/com/termux/app/activities"
-mkdir -p "$OUTPUT/app/src/main/java/com/termux/app/api/file"
-mkdir -p "$OUTPUT/app/src/main/java/com/termux/app/event"
-mkdir -p "$OUTPUT/app/src/main/java/com/termux/app/fragments/settings"
-mkdir -p "$OUTPUT/app/src/main/java/com/termux/app/models"
-mkdir -p "$OUTPUT/app/src/main/java/com/termux/app/terminal"
-mkdir -p "$OUTPUT/app/src/main/java/com/termux/app/terminal/io"
-mkdir -p "$OUTPUT/app/src/main/java/com/termux/filepicker"
-mkdir -p "$OUTPUT/app/src/main/res"
+# 删除 bootstrap zip (如果有)
+find "$OUTPUT" -name "bootstrap-*.zip" -delete 2>/dev/null || true
+find "$OUTPUT" -name "bootstrap-*.tar.xz" -delete 2>/dev/null || true
 
 # ============================================================
-# 验证源码完整性
+# 验证
 # ============================================================
 echo ""
 echo "=========================================="
-echo "Verifying source integrity:"
+echo "Verification:"
 
+# 检查文件是否存在
 FILES=(
     "app/src/main/java/com/termux/app/TermuxActivity.java"
     "app/src/main/java/com/termux/app/TermuxService.java"
@@ -154,6 +261,15 @@ FILES=(
     "app/src/main/java/com/termux/app/models/UserAction.java"
     "app/src/main/java/com/termux/filepicker/TermuxDocumentsProvider.java"
     "app/src/main/AndroidManifest.xml"
+    "terminal-emulator/src/main/java/com/termux/terminal/TerminalEmulator.java"
+    "terminal-emulator/src/main/java/com/termux/terminal/TerminalBuffer.java"
+    "terminal-emulator/src/main/java/com/termux/terminal/TerminalSession.java"
+    "terminal-emulator/src/main/java/com/termux/terminal/JNI.java"
+    "terminal-view/src/main/java/com/termux/view/TerminalView.java"
+    "termux-shared/src/main/java/com/termux/shared/termux/TermuxConstants.java"
+    "termux-shared/src/main/java/com/termux/shared/termux/TermuxUtils.java"
+    "build.gradle"
+    "settings.gradle"
 )
 
 MISSING=0
@@ -166,29 +282,23 @@ for file in "${FILES[@]}"; do
     fi
 done
 
-if [ $MISSING -eq 0 ]; then
-    echo "  ✅ All files present"
-else
-    echo "  ⚠️ Some files missing"
-fi
-
-# 验证 bootstrap patch
+# 检查 patch
 if grep -q "AssetManager" "$OUTPUT/app/src/main/java/com/termux/app/TermuxInstaller.java" 2>/dev/null; then
     echo "  ✅ AssetManager found - bootstrap uses assets"
 else
     echo "  ❌ AssetManager NOT found"
 fi
 
-if grep -q "bootstrap.*xz" "$OUTPUT/app/src/main/java/com/termux/app/TermuxInstaller.java" 2>/dev/null; then
-    echo "  ✅ bootstrap uses .xz"
+if grep -q "loadZipBytes" "$OUTPUT/app/src/main/java/com/termux/app/TermuxInstaller.java" 2>/dev/null; then
+    echo "  ❌ loadZipBytes still exists"
 else
-    echo "  ❌ bootstrap does NOT use .xz"
+    echo "  ✅ loadZipBytes removed"
 fi
 
-if [ -f "$OUTPUT/app/src/main/assets/bootstrap-aarch64.tar.xz" ]; then
-    echo "  ✅ bootstrap-aarch64.tar.xz present"
+if grep -q "determineTermuxArchName" "$OUTPUT/app/src/main/java/com/termux/app/TermuxInstaller.java" 2>/dev/null; then
+    echo "  ✅ determineTermuxArchName found"
 else
-    echo "  ❌ bootstrap-aarch64.tar.xz MISSING"
+    echo "  ❌ determineTermuxArchName NOT found"
 fi
 
 echo "=========================================="

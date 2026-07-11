@@ -28,5 +28,5 @@ jobs:
         uses: actions/upload-artifact@v4.6.0
         with:
           name: termux-sources
-          path: output/
+          path: output/termux-sources/
           retention-days: 30

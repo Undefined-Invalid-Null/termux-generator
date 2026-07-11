@@ -3,10 +3,14 @@ name: Generate Termux Sources
 on:
   workflow_dispatch:
     inputs:
-      type:
-        description: "Specify the Termux project to fork [f-droid, play-store]. Defaults to f-droid."
+      app_type:
+        description: "App type (f-droid or play-store)"
         required: false
         default: "f-droid"
+        type: choice
+        options:
+          - f-droid
+          - play-store
 
 jobs:
   generate:
@@ -15,18 +19,14 @@ jobs:
       - name: Clone repository
         uses: actions/checkout@v4
 
-      - name: Set --type
-        if: "${{ github.event.inputs.type != '' }}"
-        run: echo "APP_TYPE=--app-type ${{ github.event.inputs.type }}" >> $GITHUB_ENV
-
-      - name: Generate Sources
+      - name: Generate sources
         run: |
           chmod +x scripts/generate-sources.sh
-          ./scripts/generate-sources.sh $APP_TYPE
+          ./scripts/generate-sources.sh --app-type ${{ github.event.inputs.app_type }}
 
-      - name: Upload source package
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4.6.0
         with:
-          name: termux-app-sources
-          path: output/termux-app/
+          name: termux-sources
+          path: output/
           retention-days: 30
