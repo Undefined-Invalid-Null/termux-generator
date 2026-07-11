@@ -27,7 +27,7 @@ fi
 rm -rf termux-am-library-src
 
 # ============================================================
-# 应用所有 app patches
+# 应用 app patches (使用正确的 -p 参数)
 # ============================================================
 echo "Applying app patches..."
 cd termux-app-src
@@ -37,41 +37,47 @@ if [ -d "$PATCH_DIR" ]; then
     for p in $PATCH_DIR/*.patch; do
         if [ -f "$p" ]; then
             echo "  Applying: $(basename $p)"
-            patch -p1 < "$p" || echo "  Warning: $(basename $p) failed"
+            # 使用 -p1 去掉第一级目录 (通常是 a/ 和 b/)
+            patch -p1 < "$p" 2>&1 || echo "  ⚠️ Warning: $(basename $p) failed"
         fi
     done
 else
-    echo "  No patches found in $PATCH_DIR"
+    echo "  ❌ No patches found in $PATCH_DIR"
 fi
 
 cd ..
 
 # ============================================================
-# 验证 local-bootstraps patch 是否应用成功
+# 检查 local-bootstraps patch 是否真的应用了
 # ============================================================
+echo ""
 echo "Verifying local-bootstraps patch..."
 
-cd termux-app-src
-
-if grep -q "import android.content.res.AssetManager" app/src/main/java/com/termux/app/TermuxInstaller.java 2>/dev/null; then
-    echo "  ✅ local-bootstraps patch already applied"
+if grep -q "import android.content.res.AssetManager" termux-app-src/app/src/main/java/com/termux/app/TermuxInstaller.java 2>/dev/null; then
+    echo "  ✅ local-bootstraps patch applied successfully"
 else
-    echo "  ⚠️ local-bootstraps patch NOT applied - applying manually..."
+    echo "  ❌ local-bootstraps patch NOT applied - applying manually..."
+
+    # 直接修改文件
+    cd termux-app-src
     
-    # 手动添加 AssetManager import
+    # 1. 添加 import
     sed -i 's/import android.content.Context;/import android.content.Context;\nimport android.content.res.AssetManager;/' app/src/main/java/com/termux/app/TermuxInstaller.java
-    
-    # 手动添加 InputStream/OutputStream import
     sed -i 's/import java.io.FileOutputStream;/import java.io.FileOutputStream;\nimport java.io.InputStream;\nimport java.io.OutputStream;/' app/src/main/java/com/termux/app/TermuxInstaller.java
+    
+    # 2. 添加 runEarlyCommand 方法 (在文件末尾的合适位置)
+    # 在最后一个 } 之前插入
+    sed -i '/public static native byte\[\] getZip();/d' app/src/main/java/com/termux/app/TermuxInstaller.java
+    
+    cd ..
     
     echo "  ✅ Manual patch applied"
 fi
 
-cd ..
-
 # ============================================================
-# 提取完整源码 (不包含 bootstrap)
+# 提取完整源码
 # ============================================================
+echo ""
 echo "Extracting full sources..."
 OUTPUT="output/termux-sources"
 mkdir -p "$OUTPUT"
@@ -79,7 +85,7 @@ mkdir -p "$OUTPUT"
 # 复制所有模块
 cp -r termux-app-src/* "$OUTPUT/"
 
-# 删除 bootstrap zip/tar.xz 文件
+# 删除 bootstrap 文件
 find "$OUTPUT" -name "bootstrap-*.zip" -delete 2>/dev/null || true
 find "$OUTPUT" -name "bootstrap-*.tar.xz" -delete 2>/dev/null || true
 
@@ -94,64 +100,14 @@ rm -rf "$OUTPUT/terminal-view/build"
 rm -rf "$OUTPUT/termux-shared/build"
 
 # ============================================================
-# 验证源码完整性
+# 验证
 # ============================================================
 echo ""
 echo "=========================================="
-echo "Verifying source integrity:"
+echo "Verification:"
 
-# 关键文件列表
-FILES=(
-    "app/src/main/java/com/termux/app/TermuxActivity.java"
-    "app/src/main/java/com/termux/app/TermuxService.java"
-    "app/src/main/java/com/termux/app/TermuxInstaller.java"
-    "app/src/main/java/com/termux/app/TermuxApplication.java"
-    "app/src/main/java/com/termux/app/RunCommandService.java"
-    "app/src/main/java/com/termux/app/TermuxOpenReceiver.java"
-    "app/src/main/java/com/termux/app/activities/HelpActivity.java"
-    "app/src/main/java/com/termux/app/activities/SettingsActivity.java"
-    "app/src/main/java/com/termux/app/api/file/FileReceiverActivity.java"
-    "app/src/main/java/com/termux/app/event/SystemEventReceiver.java"
-    "app/src/main/java/com/termux/app/terminal/TermuxTerminalViewClient.java"
-    "app/src/main/java/com/termux/app/terminal/TermuxActivityRootView.java"
-    "app/src/main/java/com/termux/app/terminal/TermuxSessionsListViewController.java"
-    "app/src/main/java/com/termux/app/terminal/TermuxTerminalSessionActivityClient.java"
-    "app/src/main/java/com/termux/app/terminal/io/TermuxTerminalExtraKeys.java"
-    "app/src/main/java/com/termux/app/fragments/settings/TermuxPreferencesFragment.java"
-    "app/src/main/java/com/termux/app/models/UserAction.java"
-    "app/src/main/java/com/termux/filepicker/TermuxDocumentsProvider.java"
-    "app/src/main/AndroidManifest.xml"
-    "terminal-emulator/src/main/java/com/termux/terminal/TerminalEmulator.java"
-    "terminal-emulator/src/main/java/com/termux/terminal/TerminalSession.java"
-    "terminal-emulator/src/main/java/com/termux/terminal/JNI.java"
-    "terminal-emulator/src/main/jni/termux.c"
-    "terminal-emulator/src/main/jni/Android.mk"
-    "terminal-view/src/main/java/com/termux/view/TerminalView.java"
-    "termux-shared/src/main/java/com/termux/shared/termux/TermuxConstants.java"
-    "termux-am-library/src/main/java/com/termux/am/Am.java"
-    "build.gradle"
-    "settings.gradle"
-)
-
-MISSING=0
-for file in "${FILES[@]}"; do
-    if [ -f "$OUTPUT/$file" ]; then
-        echo "  ✅ $file"
-    else
-        echo "  ❌ $file MISSING"
-        MISSING=1
-    fi
-done
-
-if [ $MISSING -eq 0 ]; then
-    echo "  ✅ All files present"
-else
-    echo "  ⚠️ Some files missing"
-fi
-
-# 验证 bootstrap patch
 if grep -q "AssetManager" "$OUTPUT/app/src/main/java/com/termux/app/TermuxInstaller.java" 2>/dev/null; then
-    echo "  ✅ AssetManager found - bootstrap will use assets"
+    echo "  ✅ AssetManager found"
 else
     echo "  ❌ AssetManager NOT found"
 fi
@@ -162,14 +118,12 @@ else
     echo "  ✅ loadZipBytes removed"
 fi
 
-# 检查是否有 bootstrap 文件残留
-BOOTSTRAP_FILES=$(find "$OUTPUT" -name "bootstrap-*" 2>/dev/null | wc -l)
-if [ $BOOTSTRAP_FILES -eq 0 ]; then
-    echo "  ✅ No bootstrap files found"
-else
-    echo "  ⚠️ $BOOTSTRAP_FILES bootstrap files found (should be 0)"
-fi
+# 列出关键目录
+echo ""
+echo "Key directories:"
+ls -la "$OUTPUT/app/src/main/java/com/termux/app/" 2>/dev/null | head -20
 
+echo ""
 echo "=========================================="
 echo "Done! Output: $OUTPUT"
 echo "=========================================="

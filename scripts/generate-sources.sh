@@ -27,28 +27,38 @@ fi
 rm -rf termux-am-library-src
 
 # ============================================================
-# 应用 app patches (使用正确的 -p 参数)
+# 应用 app patches (使用 apply_patches 函数)
 # ============================================================
-echo "Applying app patches..."
-cd termux-app-src
-
-PATCH_DIR="../$APP_TYPE-patches/app-patches"
-if [ -d "$PATCH_DIR" ]; then
-    for p in $PATCH_DIR/*.patch; do
-        if [ -f "$p" ]; then
-            echo "  Applying: $(basename $p)"
-            # 使用 -p1 去掉第一级目录 (通常是 a/ 和 b/)
-            patch -p1 < "$p" 2>&1 || echo "  ⚠️ Warning: $(basename $p) failed"
+apply_patches() {
+    local patch_dir="$1"
+    local target_dir="$2"
+    
+    if [ ! -d "$patch_dir" ]; then
+        echo "  Patch directory not found: $patch_dir"
+        return 1
+    fi
+    
+    cd "$target_dir"
+    
+    for patch_file in "$patch_dir"/*.patch; do
+        if [ -f "$patch_file" ]; then
+            echo "  Applying: $(basename "$patch_file")"
+            patch -p1 < "$patch_file" 2>&1 || echo "  ⚠️ Warning: $(basename "$patch_file") failed"
         fi
     done
+    
+    cd - > /dev/null
+}
+
+echo "Applying app patches..."
+if [ -d "$APP_TYPE-patches/app-patches" ]; then
+    apply_patches "$APP_TYPE-patches/app-patches" "termux-app-src"
 else
-    echo "  ❌ No patches found in $PATCH_DIR"
+    echo "  ❌ No patches found in $APP_TYPE-patches/app-patches"
 fi
 
-cd ..
-
 # ============================================================
-# 检查 local-bootstraps patch 是否真的应用了
+# 验证 local-bootstraps patch 是否应用
 # ============================================================
 echo ""
 echo "Verifying local-bootstraps patch..."
@@ -58,15 +68,13 @@ if grep -q "import android.content.res.AssetManager" termux-app-src/app/src/main
 else
     echo "  ❌ local-bootstraps patch NOT applied - applying manually..."
 
-    # 直接修改文件
     cd termux-app-src
     
     # 1. 添加 import
     sed -i 's/import android.content.Context;/import android.content.Context;\nimport android.content.res.AssetManager;/' app/src/main/java/com/termux/app/TermuxInstaller.java
     sed -i 's/import java.io.FileOutputStream;/import java.io.FileOutputStream;\nimport java.io.InputStream;\nimport java.io.OutputStream;/' app/src/main/java/com/termux/app/TermuxInstaller.java
     
-    # 2. 添加 runEarlyCommand 方法 (在文件末尾的合适位置)
-    # 在最后一个 } 之前插入
+    # 2. 删除 native 方法声明
     sed -i '/public static native byte\[\] getZip();/d' app/src/main/java/com/termux/app/TermuxInstaller.java
     
     cd ..
@@ -117,11 +125,6 @@ if grep -q "loadZipBytes" "$OUTPUT/app/src/main/java/com/termux/app/TermuxInstal
 else
     echo "  ✅ loadZipBytes removed"
 fi
-
-# 列出关键目录
-echo ""
-echo "Key directories:"
-ls -la "$OUTPUT/app/src/main/java/com/termux/app/" 2>/dev/null | head -20
 
 echo ""
 echo "=========================================="
